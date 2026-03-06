@@ -16,7 +16,13 @@
  * @fileoverview Component for a blog card.
  */
 
-import {Component, Input, OnInit} from '@angular/core';
+import {
+  Component,
+  Input,
+  OnInit,
+  OnChanges,
+  SimpleChanges,
+} from '@angular/core';
 import {AppConstants} from 'app.constants';
 import {BlogPostSummary} from 'domain/blog/blog-post-summary.model';
 import {AssetsBackendApiService} from 'services/assets-backend-api.service';
@@ -31,12 +37,15 @@ import {UserService} from 'services/user.service';
   selector: 'oppia-blog-card',
   templateUrl: './blog-card.component.html',
 })
-export class BlogCardComponent implements OnInit {
+export class BlogCardComponent implements OnInit, OnChanges {
   // These properties are initialized using Angular lifecycle hooks
   // and we need to do non-null assertion. For more information, see
   // https://github.com/oppia/oppia/wiki/Guide-on-defining-types#ts-7-1
   @Input() blogPostSummary!: BlogPostSummary;
   @Input() shownOnblogPostPage!: boolean;
+  @Input() searchKeyword!: string;
+  highlightedTitle: string = '';
+  highlightedSummary: string = '';
   authorProfilePicPngUrl!: string;
   authorProfilePicWebpUrl!: string;
   thumbnailUrl: string = '';
@@ -51,7 +60,33 @@ export class BlogCardComponent implements OnInit {
     private userService: UserService
   ) {}
 
+  ngOnChanges(changes: SimpleChanges): void {
+    if (changes.blogPostSummary || changes.searchKeyword) {
+      if (this.searchKeyword) {
+        const escapeRegExp = (string: string) =>
+          string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const term = escapeRegExp(this.searchKeyword);
+        const regex = new RegExp(`(?![^<]*>)(${term})`, 'gi');
+        this.highlightedTitle = this.blogPostSummary.title.replace(
+          regex,
+          '<mark>$1</mark>'
+        );
+        this.highlightedSummary = this.blogPostSummary.summary.replace(
+          regex,
+          '<mark>$1</mark>'
+        );
+      } else {
+        this.highlightedTitle = this.blogPostSummary?.title || '';
+        this.highlightedSummary = this.blogPostSummary?.summary || '';
+      }
+    }
+  }
+
   ngOnInit(): void {
+    if (!this.highlightedTitle) {
+      this.highlightedTitle = this.blogPostSummary.title;
+      this.highlightedSummary = this.blogPostSummary.summary;
+    }
     if (this.blogPostSummary.thumbnailFilename) {
       this.thumbnailUrl =
         this.assetsBackendApiService.getThumbnailUrlForPreview(

@@ -18,7 +18,7 @@
 
 import {HttpClientTestingModule} from '@angular/common/http/testing';
 import {ComponentFixture, TestBed, waitForAsync} from '@angular/core/testing';
-import {NO_ERRORS_SCHEMA} from '@angular/core';
+import {NO_ERRORS_SCHEMA, SimpleChanges} from '@angular/core';
 import {CapitalizePipe} from 'filters/string-utility-filters/capitalize.pipe';
 import {MockTranslatePipe, MockCapitalizePipe} from 'tests/unit-test-utils';
 import {BlogCardComponent} from './blog-card.component';
@@ -160,6 +160,44 @@ describe('Blog Dashboard Tile Component', () => {
     component.ngOnInit();
 
     expect(component.thumbnailUrl).toBe('');
+  });
+
+  it('should update highlighted text when searchKeyword changes', () => {
+    component.blogPostSummary = BlogPostSummary.createFromBackendDict(
+      sampleBlogPostSummary
+    );
+    component.searchKeyword = 'world';
+
+    component.ngOnChanges({
+      searchKeyword: {
+        currentValue: 'world',
+        previousValue: '',
+        firstChange: true,
+        isFirstChange: () => true,
+      },
+    } as unknown as SimpleChanges);
+
+    expect(component.highlightedTitle).toEqual('Title');
+    expect(component.highlightedSummary).toEqual('Hello <mark>World</mark>');
+  });
+
+  it('should not highlight text if searchKeyword is empty', () => {
+    component.blogPostSummary = BlogPostSummary.createFromBackendDict(
+      sampleBlogPostSummary
+    );
+    component.searchKeyword = '';
+
+    component.ngOnChanges({
+      searchKeyword: {
+        currentValue: '',
+        previousValue: 'world',
+        firstChange: false,
+        isFirstChange: () => false,
+      },
+    } as unknown as SimpleChanges);
+
+    expect(component.highlightedTitle).toEqual('Title');
+    expect(component.highlightedSummary).toEqual('Hello World');
   });
 
   it('should navigate to the blog post page', () => {

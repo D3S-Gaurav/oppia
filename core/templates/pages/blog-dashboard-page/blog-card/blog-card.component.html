@@ -16,8 +16,7 @@
     </picture>
   </div>
   <div class="blog-card-content e2e-test-blog-post-content" [ngClass]="{'mx-1 my-1': shownOnblogPostPage}">
-    <mat-card-title class="blog-card-title e2e-test-blog-post-tile-title">
-      {{ blogPostSummary.title }}
+    <mat-card-title class="blog-card-title e2e-test-blog-post-tile-title" [innerHTML]="highlightedTitle">
     </mat-card-title>
     <mat-card-header class="mt-2">
       <picture>
@@ -36,7 +35,7 @@
       </mat-card-subtitle>
     </mat-card-header>
     <mat-card-content class="mt-4 blog-card-summary">
-      <oppia-rte-output-display [rteString]="this.blogPostSummary.summary"
+      <oppia-rte-output-display [rteString]="highlightedSummary"
                                 class="d-block">
       </oppia-rte-output-display>
     </mat-card-content>
