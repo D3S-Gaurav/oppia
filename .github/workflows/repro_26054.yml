@@ -169,3 +169,43 @@ jobs:
             set -e
             sudo timeout 10 apt-get update
             echo "SHOULD NOT PRINT while apt-get update hangs"
+
+  fixed_action_happy_path:
+    name: Fixed action - normal install
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Install Chrome with the fixed action
+        uses: D3S-Gaurav/oppia/.github/actions/install-chrome@fix-26054-install-chrome-eperm
+      - name: Verify the installed Chrome
+        run: |
+          google-chrome --version
+          echo "Lines with disable-setuid-sandbox (expected 1):"
+          grep -c "disable-setuid-sandbox" /opt/google/chrome/google-chrome
+          grep -n 'HERE/chrome' /opt/google/chrome/google-chrome
+          # Launch headless Chrome through the patched launcher, without
+          # --no-sandbox, to check that the sandbox flag does not stop Chrome
+          # from starting.
+          google-chrome --headless --disable-gpu --dump-dom 'data:text/html,<p>chrome-ok</p>' | grep chrome-ok
+          # Launch it the way the Lighthouse config does, too.
+          google-chrome --headless --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom 'data:text/html,<p>chrome-ok</p>' | grep chrome-ok
+
+  fixed_action_hanging_apt:
+    name: Fixed action - hanging apt-get update
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - name: Make apt-get update hang to simulate a stalled mirror
+        run: |
+          sudo tee /usr/local/sbin/apt-get > /dev/null << 'EOS'
+          #!/bin/bash
+          if [[ "$1" == "update" ]]; then
+            echo "Simulating a hanging apt-get update..."
+            exec sleep 600
+          fi
+          exec /usr/bin/apt-get "$@"
+          EOS
+          sudo chmod +x /usr/local/sbin/apt-get
+      - name: Install Chrome with the fixed action (expected - 3 clean retries, no EPERM)
+        uses: D3S-Gaurav/oppia/.github/actions/install-chrome@fix-26054-install-chrome-eperm
