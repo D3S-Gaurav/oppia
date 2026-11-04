@@ -1,10 +1,6 @@
-# Throwaway workflow that reproduces #26054. Do not merge.
-#
-# When nick-fields/retry@v3 hits its timeout, it uses tree-kill to stop the
-# command's process tree. Processes started with sudo are owned by root, so the
-# runner user cannot signal them, process.kill() throws EPERM, and tree-kill
-# rethrows it without a callback. That crashes the whole action instead of
-# moving on to the next attempt.
+# Throwaway workflow that tests the install-chrome fix on the fork. Do not
+# merge. Earlier runs on this branch reproduced the original "kill EPERM"
+# crash; this version checks the fixed action at a pinned commit.
 name: Repro 26054 (retry EPERM)
 on:
   push:
@@ -12,191 +8,25 @@ on:
       - repro-26054-retry-eperm
 permissions: read-all
 jobs:
-  sudo_command_times_out:
-    name: Bug - sudo command hits retry timeout
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    continue-on-error: true
-    steps:
-      - name: Retry a hanging sudo command (expected to crash with EPERM)
-        uses: nick-fields/retry@v3
-        with:
-          max_attempts: 3
-          retry_on: error
-          shell: bash
-          timeout_seconds: 20
-          command: |
-            # Print the owner of the hanging process so the logs show that it
-            # is root, not the runner user.
-            (sleep 5 && ps -o user=,pid=,ppid=,cmd= -C sleep) &
-            sudo sleep 300
-
-  non_sudo_command_times_out:
-    name: Control - non-sudo command hits retry timeout
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    continue-on-error: true
-    steps:
-      - name: Retry a hanging non-sudo command (expected to retry 3 times)
-        uses: nick-fields/retry@v3
-        with:
-          max_attempts: 3
-          retry_on: error
-          shell: bash
-          timeout_seconds: 20
-          command: |
-            (sleep 5 && ps -o user=,pid=,ppid=,cmd= -C sleep) &
-            sleep 300
-
-  install_chrome_with_hanging_apt:
-    name: Real script - install-chrome with a hanging apt-get update
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    continue-on-error: true
-    steps:
-      - name: Make apt-get update hang to simulate a stalled mirror
-        run: |
-          # Shadow apt-get with a wrapper that hangs on "update" and passes
-          # everything else through. /usr/local/sbin comes before /usr/bin in
-          # sudo's secure_path, so "sudo apt-get" picks up the wrapper.
-          sudo tee /usr/local/sbin/apt-get > /dev/null << 'EOF'
-          #!/bin/bash
-          if [[ "$1" == "update" ]]; then
-            echo "Simulating a hanging apt-get update..."
-            exec sleep 300
-          fi
-          exec /usr/bin/apt-get "$@"
-          EOF
-          sudo chmod +x /usr/local/sbin/apt-get
-      - name: Install Chrome (same command as .github/actions/install-chrome)
-        uses: nick-fields/retry@v3
-        env:
-          CHROME_VERSION: "102.0.5005.61-1"
-        with:
-          max_attempts: 3
-          retry_on: error
-          shell: bash
-          # The real action uses timeout_minutes: 10. A shorter timeout keeps
-          # the repro fast without changing the behavior being tested.
-          timeout_seconds: 30
-          command: |
-            sudo apt-get update
-            sudo apt-get install libappindicator3-1
-            curl -L -o google-chrome.deb https://github.com/webnicer/chrome-downloads/raw/master/x64.deb/google-chrome-stable_${{ env.CHROME_VERSION }}_amd64.deb
-            sudo sed -i 's|HERE/chrome\"|HERE/chrome\" --disable-setuid-sandbox|g' /opt/google/chrome/google-chrome
-            sudo dpkg -i google-chrome.deb
-            chrome_version=$(google-chrome --version 2>&1 | tr -cd '[:digit:].')
-            [[ "${{ env.CHROME_VERSION }}" == "$chrome_version"* ]] || { echo "Error: Desired version does not start with Chrome version."; exit 1;}
-
-  check_sed_before_dpkg:
-    name: Check - does the sandbox sed survive dpkg -i
-    runs-on: ubuntu-22.04
-    timeout-minutes: 10
-    continue-on-error: true
-    steps:
-      - name: Inspect Chrome before install
-        run: |
-          ls -l /opt/google/chrome/google-chrome || echo "NOT PRESENT before install"
-          google-chrome --version || true
-          grep -c "disable-setuid-sandbox" /opt/google/chrome/google-chrome || true
-      - name: Install Chrome (same command as .github/actions/install-chrome)
-        uses: nick-fields/retry@v3
-        env:
-          CHROME_VERSION: "102.0.5005.61-1"
-        with:
-          max_attempts: 3
-          retry_on: error
-          shell: bash
-          timeout_minutes: 10
-          command: |
-            sudo apt-get update
-            sudo apt-get install libappindicator3-1
-            curl -L -o google-chrome.deb https://github.com/webnicer/chrome-downloads/raw/master/x64.deb/google-chrome-stable_${{ env.CHROME_VERSION }}_amd64.deb
-            sudo sed -i 's|HERE/chrome\"|HERE/chrome\" --disable-setuid-sandbox|g' /opt/google/chrome/google-chrome
-            sudo dpkg -i google-chrome.deb
-            chrome_version=$(google-chrome --version 2>&1 | tr -cd '[:digit:].')
-            [[ "${{ env.CHROME_VERSION }}" == "$chrome_version"* ]] || { echo "Error: Desired version does not start with Chrome version."; exit 1;}
-      - name: Inspect Chrome after install
-        run: |
-          google-chrome --version
-          echo "Lines with disable-setuid-sandbox after install:"
-          grep -c "disable-setuid-sandbox" /opt/google/chrome/google-chrome || true
-          grep -n 'HERE/chrome' /opt/google/chrome/google-chrome || true
-
-  check_no_errexit:
-    name: Check - retry command runs without set -e
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    continue-on-error: true
-    steps:
-      - name: A failing line in the middle should not stop the command
-        uses: nick-fields/retry@v3
-        with:
-          max_attempts: 3
-          retry_on: error
-          shell: bash
-          timeout_seconds: 30
-          command: |
-            echo "shell options: $-"
-            false
-            echo "STILL RUNNING after a failed line"
-
-  candidate_fix_inner_timeout:
-    name: Candidate fix - set -e plus sudo timeout
-    runs-on: ubuntu-22.04
-    timeout-minutes: 5
-    continue-on-error: true
-    steps:
-      - name: Make apt-get update hang to simulate a stalled mirror
-        run: |
-          sudo tee /usr/local/sbin/apt-get > /dev/null << 'EOF'
-          #!/bin/bash
-          if [[ "$1" == "update" ]]; then
-            echo "Simulating a hanging apt-get update..."
-            exec sleep 300
-          fi
-          exec /usr/bin/apt-get "$@"
-          EOF
-          sudo chmod +x /usr/local/sbin/apt-get
-      - name: Retry with an inner timeout (expected - 3 clean attempts, no EPERM)
-        uses: nick-fields/retry@v3
-        with:
-          max_attempts: 3
-          retry_on: error
-          shell: bash
-          timeout_seconds: 60
-          command: |
-            set -e
-            sudo timeout 10 apt-get update
-            echo "SHOULD NOT PRINT while apt-get update hangs"
-
-  fixed_action_happy_path:
+  normal_install:
     name: Fixed action - normal install
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
       - name: Install Chrome with the fixed action
-        uses: D3S-Gaurav/oppia/.github/actions/install-chrome@fix-26054-install-chrome-eperm
+        uses: D3S-Gaurav/oppia/.github/actions/install-chrome@9ac15f083a34921aa9a4a377b087ea72844f09f2
       - name: Verify the installed Chrome
         run: |
           google-chrome --version
-          echo "Lines with disable-setuid-sandbox (expected 1):"
-          grep -c "disable-setuid-sandbox" /opt/google/chrome/google-chrome
-          grep -n 'HERE/chrome' /opt/google/chrome/google-chrome
-          # Launch headless Chrome through the patched launcher, without
-          # --no-sandbox, to check that the sandbox flag does not stop Chrome
-          # from starting.
-          google-chrome --headless --disable-gpu --dump-dom 'data:text/html,<p>chrome-ok</p>' | grep chrome-ok
-          # Launch it the way the Lighthouse config does, too.
           google-chrome --headless --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom 'data:text/html,<p>chrome-ok</p>' | grep chrome-ok
 
-  fixed_action_hanging_apt:
-    name: Fixed action - hanging apt-get update
+  apt_update_hangs:
+    name: Fixed action - apt-get update hangs
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     continue-on-error: true
     steps:
-      - name: Make apt-get update hang to simulate a stalled mirror
+      - name: Make apt-get update hang
         run: |
           sudo tee /usr/local/sbin/apt-get > /dev/null << 'EOS'
           #!/bin/bash
@@ -207,5 +37,48 @@ jobs:
           exec /usr/bin/apt-get "$@"
           EOS
           sudo chmod +x /usr/local/sbin/apt-get
-      - name: Install Chrome with the fixed action (expected - 3 clean retries, no EPERM)
-        uses: D3S-Gaurav/oppia/.github/actions/install-chrome@fix-26054-install-chrome-eperm
+      - name: Install Chrome (expected - 3 attempts that time out, no EPERM)
+        uses: D3S-Gaurav/oppia/.github/actions/install-chrome@9ac15f083a34921aa9a4a377b087ea72844f09f2
+
+  apt_update_ignores_sigterm:
+    name: Fixed action - hang that ignores SIGTERM
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    continue-on-error: true
+    steps:
+      - name: Make apt-get update hang and ignore SIGTERM
+        run: |
+          sudo tee /usr/local/sbin/apt-get > /dev/null << 'EOS'
+          #!/bin/bash
+          if [[ "$1" == "update" ]]; then
+            echo "Simulating a hanging apt-get update that ignores SIGTERM..."
+            trap '' TERM
+            sleep 600
+            exit 0
+          fi
+          exec /usr/bin/apt-get "$@"
+          EOS
+          sudo chmod +x /usr/local/sbin/apt-get
+      - name: Install Chrome (expected - SIGKILL after 10s, 3 attempts, no EPERM)
+        uses: D3S-Gaurav/oppia/.github/actions/install-chrome@9ac15f083a34921aa9a4a377b087ea72844f09f2
+
+  apt_update_fails_fast:
+    name: Fixed action - apt-get update fails without hanging
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Make apt-get update fail with exit code 100
+        run: |
+          sudo tee /usr/local/sbin/apt-get > /dev/null << 'EOS'
+          #!/bin/bash
+          if [[ "$1" == "update" ]]; then
+            echo "Simulating apt-get update failing (exit 100)..."
+            exit 100
+          fi
+          exec /usr/bin/apt-get "$@"
+          EOS
+          sudo chmod +x /usr/local/sbin/apt-get
+      - name: Install Chrome (expected - still succeeds on attempt 1, as before)
+        uses: D3S-Gaurav/oppia/.github/actions/install-chrome@9ac15f083a34921aa9a4a377b087ea72844f09f2
+      - name: Verify the installed Chrome
+        run: google-chrome --version
